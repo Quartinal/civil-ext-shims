@@ -1,0 +1,34 @@
+{
+    "name": "@quartinal/extension-shim",
+    "version": "0.0.1",
+    "description": "A complete, thorough, and well-documented shim for chrome extension apis, used in Civil Proxy.",
+    "author": "Jasper Quartarolo <https://github.com/Quartinal>",
+    "license": "GPL-3.0",
+    "private": true,
+    "type": "module",
+    "main": "dist/civil-ext-shim.js",
+    "types": "dist/index.d.ts",
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "build": "rollup -c",
+        "build:watch": "rollup -c --watch",
+        "typecheck": "tsc --noEmit",
+        "clean": "rimraf dist",
+        "check": "biome check --write --unsafe",
+        "fixall": "tsc --noEmit && biome check --write --unsafe"
+    },
+    "devDependencies": {
+        "@biomejs/biome": "^2.4.12",
+        "@rollup/plugin-node-resolve": "^16.0.3",
+        "@rollup/plugin-terser": "^1.0.0",
+        "@rollup/plugin-typescript": "^12.3.0",
+        "@types/chrome": "latest",
+        "@types/node": "latest",
+        "rimraf": "^6.1.3",
+        "rollup": "^4.60.1",
+        "tslib": "^2.8.1",
+        "typescript": "^6.0.2"
+    }
+}
