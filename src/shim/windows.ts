@@ -1,18 +1,24 @@
 import { CivilEvent } from "./event";
-import { resolved } from "./util";
+import { dispatchBrowserEvent, getBiB, resolved } from "./util";
 
 function makeWindow(): chrome.windows.Window {
+    const bib = getBiB();
+    const syn = bib.currentWindow;
     return {
-        id: 1,
+        id: syn.id ?? 1,
         focused: true,
         alwaysOnTop: false,
-        incognito: false,
-        state: "normal",
-        type: "normal",
-        top: 0,
-        left: 0,
-        width: typeof window !== "undefined" ? window.outerWidth : 1280,
-        height: typeof window !== "undefined" ? window.outerHeight : 800,
+        incognito: syn.incognito ?? bib.incognito,
+        state: syn.state ?? "normal",
+        type: syn.type ?? "normal",
+        top: syn.top ?? 0,
+        left: syn.left ?? 0,
+        width:
+            syn.width ??
+            (typeof window !== "undefined" ? window.outerWidth : 1280),
+        height:
+            syn.height ??
+            (typeof window !== "undefined" ? window.outerHeight : 800),
         tabs: [],
         sessionId: undefined,
     };
@@ -26,86 +32,43 @@ export function buildWindowsAPI() {
         (win: chrome.windows.Window) => void
     >();
 
-    function get(
-        _windowId: number,
-        queryOptionsOrCb?:
-            | chrome.windows.QueryOptions
-            | ((win: chrome.windows.Window) => void),
-        maybeCb?: (win: chrome.windows.Window) => void,
-    ) {
-        const cb =
-            typeof queryOptionsOrCb === "function" ? queryOptionsOrCb : maybeCb;
-        return resolved(makeWindow(), cb);
-    }
-
-    function getCurrent(
-        queryOptionsOrCb?:
-            | chrome.windows.QueryOptions
-            | ((win: chrome.windows.Window) => void),
-        maybeCb?: (win: chrome.windows.Window) => void,
-    ) {
-        const cb =
-            typeof queryOptionsOrCb === "function" ? queryOptionsOrCb : maybeCb;
-        return resolved(makeWindow(), cb);
-    }
-
-    function getLastFocused(
-        queryOptionsOrCb?:
-            | chrome.windows.QueryOptions
-            | ((win: chrome.windows.Window) => void),
-        maybeCb?: (win: chrome.windows.Window) => void,
-    ) {
-        const cb =
-            typeof queryOptionsOrCb === "function" ? queryOptionsOrCb : maybeCb;
-        return resolved(makeWindow(), cb);
-    }
-
-    function getAll(
-        queryOptionsOrCb?:
-            | chrome.windows.QueryOptions
-            | ((wins: chrome.windows.Window[]) => void),
-        maybeCb?: (wins: chrome.windows.Window[]) => void,
-    ) {
-        const cb =
-            typeof queryOptionsOrCb === "function" ? queryOptionsOrCb : maybeCb;
-        return resolved([makeWindow()], cb);
-    }
-
-    function create(
-        createData?: chrome.windows.CreateData,
-        cb?: (win?: chrome.windows.Window) => void,
-    ) {
-        if (createData?.url && typeof document !== "undefined") {
-            const url = Array.isArray(createData.url)
-                ? createData.url[0]
-                : createData.url;
-            document.dispatchEvent(
-                new CustomEvent("browser:newtab", { detail: { url } }),
-            );
-        }
-        return resolved(makeWindow(), cb);
-    }
-
-    function update(
-        _windowId: number,
-        _updateInfo: chrome.windows.UpdateInfo,
-        cb?: (win: chrome.windows.Window) => void,
-    ) {
-        return resolved(makeWindow(), cb);
-    }
-
-    function remove(_windowId: number, cb?: () => void) {
-        return resolved(undefined, cb);
-    }
+    const _cb = <T>(qOrCb?: unknown, cb?: (r: T) => void) =>
+        typeof qOrCb === "function" ? (qOrCb as (r: T) => void) : cb;
 
     return {
-        get,
-        getCurrent,
-        getLastFocused,
-        getAll,
-        create,
-        update,
-        remove,
+        get: (
+            _id: number,
+            qOrCb?: unknown,
+            cb?: (w: chrome.windows.Window) => void,
+        ) => resolved(makeWindow(), _cb(qOrCb, cb)),
+        getCurrent: (
+            qOrCb?: unknown,
+            cb?: (w: chrome.windows.Window) => void,
+        ) => resolved(makeWindow(), _cb(qOrCb, cb)),
+        getLastFocused: (
+            qOrCb?: unknown,
+            cb?: (w: chrome.windows.Window) => void,
+        ) => resolved(makeWindow(), _cb(qOrCb, cb)),
+        getAll: (qOrCb?: unknown, cb?: (ws: chrome.windows.Window[]) => void) =>
+            resolved([makeWindow()], _cb(qOrCb, cb)),
+        create(
+            props?: chrome.windows.CreateData,
+            cb?: (w?: chrome.windows.Window) => void,
+        ): Promise<chrome.windows.Window | undefined> {
+            const bib = getBiB();
+            if (props?.url) {
+                const url = Array.isArray(props.url) ? props.url[0] : props.url;
+                if (url) dispatchBrowserEvent(bib.newTabEvent, { url });
+            }
+            return resolved(makeWindow(), cb);
+        },
+        update: (
+            _id: number,
+            _info: chrome.windows.UpdateInfo,
+            cb?: (w: chrome.windows.Window) => void,
+        ) => resolved(makeWindow(), cb),
+        remove: (_id: number, cb?: () => void) => resolved(undefined, cb),
+
         onFocusChanged,
         onCreated,
         onRemoved,

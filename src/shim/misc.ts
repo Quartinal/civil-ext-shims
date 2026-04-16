@@ -1,5 +1,5 @@
 import { CivilEvent, makeNoopEvent } from "./event";
-import { resolved } from "./util";
+import { getBiB, resolved } from "./util";
 
 interface MessageEntry {
     message: string;
@@ -7,12 +7,13 @@ interface MessageEntry {
 }
 
 export function buildI18nAPI() {
-    const _messages: Record<string, MessageEntry> = {};
+    const _extra: Record<string, MessageEntry> = {};
 
     function getMessage(
         messageName: string,
         substitutions?: string | string[],
     ): string {
+        const _messages = { ...getBiB().messages, ..._extra };
         const entry = _messages[messageName];
         if (!entry) return messageName;
         let msg = entry.message;
@@ -64,7 +65,7 @@ export function buildI18nAPI() {
     }
 
     function _seed(messages: Record<string, MessageEntry>): void {
-        Object.assign(_messages, messages);
+        Object.assign(_extra, messages);
     }
 
     return {

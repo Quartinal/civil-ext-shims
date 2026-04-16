@@ -1,17 +1,15 @@
 import type { ChromeManifest, MessageSender, Port } from "../types";
 import { CivilEvent } from "./event";
-import { dual, resolved, toLastError } from "./util";
+import { dual, extUrl, getBiB, resolved, toLastError } from "./util";
 
 class CivilPort implements Port {
     name: string;
     sender?: MessageSender;
     error?: { message: string };
-
     readonly onMessage = new CivilEvent<
         (message: unknown, port: Port) => void
     >();
     readonly onDisconnect = new CivilEvent<(port: Port) => void>();
-
     private _connected = true;
     private _remote: CivilPort | null = null;
 
@@ -26,9 +24,7 @@ class CivilPort implements Port {
 
     postMessage(message: unknown): void {
         if (!this._connected) {
-            console.warn(
-                "[civil-ext-shim] Port.postMessage on disconnected port",
-            );
+            console.warn("[civil-ext-shim] postMessage on disconnected port");
             return;
         }
         this._remote?.onMessage.dispatch(message, this._remote);
@@ -48,20 +44,18 @@ export function buildRuntimeAPI(extId: string, manifest: ChromeManifest) {
 
     const onMessage = new CivilEvent<
         (
-            message: unknown,
+            msg: unknown,
             sender: MessageSender,
-            sendResponse: (response?: unknown) => void,
+            sendResponse: (r?: unknown) => void,
         ) => undefined | boolean
     >();
-
     const onMessageExternal = new CivilEvent<
         (
-            message: unknown,
+            msg: unknown,
             sender: MessageSender,
-            sendResponse: (response?: unknown) => void,
+            sendResponse: (r?: unknown) => void,
         ) => undefined | boolean
     >();
-
     const onConnect = new CivilEvent<(port: Port) => void>();
     const onConnectExternal = new CivilEvent<(port: Port) => void>();
     const onInstalled = new CivilEvent<
@@ -75,6 +69,10 @@ export function buildRuntimeAPI(extId: string, manifest: ChromeManifest) {
     >();
     const onBrowserUpdateAvailable = new CivilEvent<() => void>();
     const onRestartRequired = new CivilEvent<(reason: string) => void>();
+    const onUserScriptConnect = new CivilEvent<(port: Port) => void>();
+    const onUserScriptMessage = new CivilEvent<
+        (msg: unknown, sender: MessageSender) => void
+    >();
 
     setTimeout(() => {
         onInstalled.dispatch({
@@ -83,23 +81,24 @@ export function buildRuntimeAPI(extId: string, manifest: ChromeManifest) {
         } as chrome.runtime.InstalledDetails);
     }, 0);
 
+    function getURL(path: string): string {
+        return extUrl(extId, path);
+    }
+
     function connect(
-        extensionIdOrConnectInfo?:
+        extensionIdOrInfo?:
             | string
             | { name?: string; includeTlsChannelId?: boolean },
         connectInfo?: { name?: string; includeTlsChannelId?: boolean },
     ): Port {
         const info =
-            typeof extensionIdOrConnectInfo === "object"
-                ? extensionIdOrConnectInfo
+            typeof extensionIdOrInfo === "object"
+                ? extensionIdOrInfo
                 : (connectInfo ?? {});
-        const name = info.name ?? "";
-
-        const callerPort = new CivilPort(name, { id: extId });
-        const receiverPort = new CivilPort(name, { id: extId });
+        const callerPort = new CivilPort(info.name ?? "", { id: extId });
+        const receiverPort = new CivilPort(info.name ?? "", { id: extId });
         callerPort._link(receiverPort);
         receiverPort._link(callerPort);
-
         onConnect.dispatch(receiverPort);
         return callerPort;
     }
@@ -112,7 +111,6 @@ export function buildRuntimeAPI(extId: string, manifest: ChromeManifest) {
     ): Promise<unknown> {
         let message: unknown;
         let cb: ((response: unknown) => void) | undefined;
-
         if (typeof extensionIdOrMessage === "string") {
             message = messageOrOptions;
             cb = (
@@ -128,26 +126,21 @@ export function buildRuntimeAPI(extId: string, manifest: ChromeManifest) {
                       : maybeCb
             ) as typeof cb;
         }
-
-        return dual(() => {
-            return new Promise<unknown>(resolve => {
-                const sender: MessageSender = { id: extId };
-                let responded = false;
-                const sendResponse = (response?: unknown) => {
-                    if (!responded) {
-                        responded = true;
-                        resolve(response);
-                    }
-                };
-                onMessage.dispatch(message, sender, sendResponse);
-                if (!responded) resolve(undefined);
-            });
-        }, cb);
-    }
-
-    function getURL(path: string): string {
-        const p = path.replace(/^\//, "");
-        return `${typeof window !== "undefined" ? window.location.origin : ""}/civil-ext/${extId}/${p}`;
+        return dual(
+            () =>
+                new Promise<unknown>(resolve => {
+                    let responded = false;
+                    const sendResponse = (r?: unknown) => {
+                        if (!responded) {
+                            responded = true;
+                            resolve(r);
+                        }
+                    };
+                    onMessage.dispatch(message, { id: extId }, sendResponse);
+                    if (!responded) resolve(undefined);
+                }),
+            cb,
+        );
     }
 
     return {
@@ -163,32 +156,36 @@ export function buildRuntimeAPI(extId: string, manifest: ChromeManifest) {
 
         getContexts: (
             _filter: Record<string, unknown>,
-            cb?: (contexts: unknown[]) => void,
+            cb?: (ctx: unknown[]) => void,
         ) => resolved([], cb),
 
-        getPlatformInfo: (cb?: (info: chrome.runtime.PlatformInfo) => void) =>
-            resolved(
+        getPlatformInfo: (cb?: (info: chrome.runtime.PlatformInfo) => void) => {
+            const bib = getBiB();
+            return resolved(
                 {
-                    os: "win",
-                    arch: "x86-64",
-                    nacl_arch: "x86-64",
+                    os: bib.platformInfo.os ?? "win",
+                    arch: bib.platformInfo.arch ?? "x86-64",
+                    nacl_arch: bib.platformInfo.nacl_arch ?? "x86-64",
                 } as chrome.runtime.PlatformInfo,
                 cb,
-            ),
+            );
+        },
 
         getBackgroundPage: (cb?: (page: Window | null) => void) =>
             resolved(null, cb),
-
         openOptionsPage: (cb?: () => void) => resolved(undefined, cb),
         setUninstallURL: (_url: string, cb?: () => void) =>
             resolved(undefined, cb),
         reload: () => {
             /* no-op */
         },
+
         requestUpdateCheck: (cb?: (status: string) => void) => {
             if (cb) cb("no_update");
             return Promise.resolve({ status: "no_update" });
         },
+
+        sendRequest: sendMessage,
 
         onMessage,
         onMessageExternal,
@@ -201,6 +198,8 @@ export function buildRuntimeAPI(extId: string, manifest: ChromeManifest) {
         onUpdateAvailable,
         onBrowserUpdateAvailable,
         onRestartRequired,
+        onUserScriptConnect,
+        onUserScriptMessage,
 
         _setLastError(e: unknown) {
             _lastError = e ? toLastError(e) : null;

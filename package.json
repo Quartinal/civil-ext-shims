@@ -4,9 +4,8 @@
     "description": "A complete, thorough, and well-documented shim for chrome extension apis, used in Civil Proxy.",
     "author": "Jasper Quartarolo <https://github.com/Quartinal>",
     "license": "GPL-3.0",
-    "private": true,
     "type": "module",
-    "main": "dist/civil-ext-shim.js",
+    "main": "dist/index.js",
     "types": "dist/index.d.ts",
     "files": [
         "dist"

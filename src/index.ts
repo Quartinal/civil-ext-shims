@@ -1,6 +1,7 @@
 export type {
     Alarm,
     AlarmCreateInfo,
+    BiBConfig,
     ChromeEvent,
     ChromeManifest,
     ContentScript,
@@ -10,6 +11,8 @@ export type {
     Port,
     ShimOptions,
     StorageData,
+    SyntheticTab,
+    SyntheticWindow,
     TabInfo,
 } from "./types";
 
@@ -18,14 +21,14 @@ import SHIM_SOURCE from "virtual:civil-ext-shim-source";
 const DEV_SHIM_PATH = "/civil-ext-shim.js";
 
 export function buildChromeShim(opts: import("./types").ShimOptions): string {
-    const { extId, manifest, storageData = {}, origin } = opts;
+    const { extId, manifest, storageData = {} } = opts;
 
     const optsJson = JSON.stringify(
         {
             extId,
             manifest,
             storageData,
-            origin,
+            bib: opts.bib,
         } satisfies import("./types").ShimOptions,
         (_key, value) => {
             if (typeof value === "function") return undefined;

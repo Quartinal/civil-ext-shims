@@ -1,6 +1,50 @@
 import type { ShimOptions } from "../types";
 import { buildActionAPI } from "./action";
 import { buildAlarmsAPI } from "./alarms";
+import {
+    accessibilityFeatures,
+    audio,
+    certificateProvider,
+    contentSettings,
+    declarativeContent,
+    declarativeWebRequest,
+    desktopCapture,
+    devtools,
+    dom,
+    enterprise,
+    extensionTypes,
+    fileBrowserHandler,
+    fileSystemProvider,
+    fontSettings,
+    gcm,
+    idle,
+    input,
+    instanceID,
+    loginState,
+    networking,
+    omnibox,
+    pageCapture,
+    platformKeys,
+    power,
+    printerProvider,
+    printing,
+    printingMetrics,
+    readingList,
+    search,
+    serial,
+    sessions,
+    socket,
+    systemLog,
+    tabCapture,
+    tabGroups,
+    topSites,
+    tts,
+    ttsEngine,
+    userScripts,
+    vpnProvider,
+    wallpaper,
+    webAuthenticationProxy,
+} from "./apis";
 import { buildDNRAPI } from "./declarativeNetRequest";
 import {
     buildBookmarksAPI,
@@ -25,6 +69,7 @@ import { buildRuntimeAPI } from "./runtime";
 import { buildScriptingAPI } from "./scripting";
 import { buildStorageAPI } from "./storage";
 import { buildTabsAPI } from "./tabs";
+import { extUrl, getBiB, initBiB } from "./util";
 import { buildWebNavigationAPI } from "./webNavigation";
 import { buildWindowsAPI } from "./windows";
 
@@ -37,47 +82,71 @@ declare const __CIVIL_SHIM_OPTIONS__: ShimOptions;
         true;
 
     const opts: ShimOptions = __CIVIL_SHIM_OPTIONS__;
-    const { extId, manifest, storageData = {}, origin } = opts;
+    const { extId, manifest, storageData = {} } = opts;
 
-    const _origin = origin ?? window.location.origin;
+    initBiB(opts.bib, window.location.origin);
+    const bib = getBiB();
+    const features = bib.features ?? {};
 
     const runtime = buildRuntimeAPI(extId, manifest);
     const storage = buildStorageAPI(storageData);
     const tabs = buildTabsAPI(extId);
     const windows = buildWindowsAPI();
-    const alarms = buildAlarmsAPI();
     const action = buildActionAPI();
     const scripting = buildScriptingAPI();
-    const dnr = buildDNRAPI();
-    const webNavigation = buildWebNavigationAPI();
+    const dnr =
+        features.declarativeNetRequest !== false
+            ? buildDNRAPI()
+            : buildDNRStub();
+    const webNav =
+        features.webNavigation !== false
+            ? buildWebNavigationAPI()
+            : buildNoopNamespace();
     const i18n = buildI18nAPI();
     const permissions = buildPermissionsAPI();
-    const contextMenus = buildContextMenusAPI();
-    const webRequest = buildWebRequestAPI();
-    const notifications = buildNotificationsAPI();
+    const contextMenus =
+        features.contextMenus !== false
+            ? buildContextMenusAPI()
+            : buildNoopNamespace();
+    const webRequest =
+        features.webRequest !== false
+            ? buildWebRequestAPI()
+            : buildNoopNamespace();
+    const notifs =
+        features.notifications !== false
+            ? buildNotificationsAPI()
+            : buildNoopNamespace();
     const browsingData = buildBrowsingDataAPI();
     const management = buildManagementAPI();
     const offscreen = buildOffscreenAPI();
     const sidePanel = buildSidePanelAPI();
-    const privacy = buildPrivacyAPI();
-    const proxy = buildProxyAPI();
+    const privacy =
+        features.privacy !== false ? buildPrivacyAPI() : buildNoopNamespace();
+    const proxy =
+        features.proxy !== false ? buildProxyAPI() : buildNoopNamespace();
     const dns = buildDnsAPI();
-    const cookies = buildCookiesAPI();
-    const history = buildHistoryAPI();
+    const cookies =
+        features.cookies !== false ? buildCookiesAPI() : buildNoopNamespace();
+    const history =
+        features.history !== false ? buildHistoryAPI() : buildNoopNamespace();
     const bookmarks = buildBookmarksAPI();
     const commands = buildCommandsAPI();
-    const downloads = buildDownloadsAPI();
+    const downloads =
+        features.downloads !== false
+            ? buildDownloadsAPI()
+            : buildNoopNamespace();
+    const alarmsAPI =
+        features.alarms !== false ? buildAlarmsAPI() : buildNoopNamespace();
 
     const extension = {
-        getURL: runtime.getURL,
+        getURL: (path: string) => extUrl(extId, path),
         getBackgroundPage: () => null as Window | null,
-        getViews: (_fetchProperties?: { type?: string; windowId?: number }) =>
-            [] as Window[],
-        isAllowedIncognitoAccess: (cb?: (isAllowed: boolean) => void) => {
+        getViews: (_fetchProperties?: unknown) => [] as Window[],
+        isAllowedIncognitoAccess: (cb?: (allowed: boolean) => void) => {
             if (cb) cb(false);
             return Promise.resolve(false);
         },
-        isAllowedFileSchemeAccess: (cb?: (isAllowed: boolean) => void) => {
+        isAllowedFileSchemeAccess: (cb?: (allowed: boolean) => void) => {
             if (cb) cb(false);
             return Promise.resolve(false);
         },
@@ -87,8 +156,10 @@ declare const __CIVIL_SHIM_OPTIONS__: ShimOptions;
         onMessage: runtime.onMessage,
         onRequestExternal: runtime.onMessageExternal,
         onMessageExternal: runtime.onMessageExternal,
-        inIncognitoContext: false,
+        inIncognitoContext: bib.incognito,
         lastError: null as { message: string } | null,
+
+        getExtensionTabs: () => [] as unknown[],
     };
 
     const types = {
@@ -99,8 +170,11 @@ declare const __CIVIL_SHIM_OPTIONS__: ShimOptions;
                 hasListener() {
                     return false;
                 },
+                hasListeners() {
+                    return false;
+                },
             };
-            get(_details: unknown, cb?: (details: unknown) => void) {
+            get(_d: unknown, cb?: (d: unknown) => void) {
                 if (cb)
                     cb({
                         value: undefined,
@@ -111,11 +185,11 @@ declare const __CIVIL_SHIM_OPTIONS__: ShimOptions;
                     levelOfControl: "not_controllable",
                 });
             }
-            set(_details: unknown, cb?: () => void) {
+            set(_d: unknown, cb?: () => void) {
                 if (cb) cb();
                 return Promise.resolve();
             }
-            clear(_details: unknown, cb?: () => void) {
+            clear(_d: unknown, cb?: () => void) {
                 if (cb) cb();
                 return Promise.resolve();
             }
@@ -127,18 +201,16 @@ declare const __CIVIL_SHIM_OPTIONS__: ShimOptions;
         storage,
         tabs,
         windows,
-        alarms,
         action,
         browserAction: action,
         pageAction: action,
         scripting,
         declarativeNetRequest: dnr,
-        webNavigation,
-        i18n,
+        webNavigation: webNav,
+        webRequest,
         permissions,
         contextMenus,
-        webRequest,
-        notifications,
+        notifications: notifs,
         browsingData,
         management,
         offscreen,
@@ -151,11 +223,64 @@ declare const __CIVIL_SHIM_OPTIONS__: ShimOptions;
         bookmarks,
         commands,
         downloads,
+        alarms: alarmsAPI,
+        i18n,
         extension,
         types,
 
-        devtools: undefined,
+        accessibilityFeatures,
+        audio,
+        certificateProvider,
+        contentSettings:
+            features.contentSettings !== false
+                ? contentSettings
+                : buildNoopNamespace(),
+        declarativeContent,
+        declarativeWebRequest,
+        desktopCapture,
+        devtools: features.devtools !== false ? devtools : undefined,
+        dom,
+        enterprise,
+        extensionTypes,
+        fileBrowserHandler,
+        fileSystemProvider,
+        fontSettings:
+            features.fontSettings !== false
+                ? fontSettings
+                : buildNoopNamespace(),
+        gcm,
+        idle: features.idle !== false ? idle : buildNoopNamespace(),
+        input,
+        instanceID,
+        loginState,
+        networking,
+        omnibox: features.omnibox !== false ? omnibox : buildNoopNamespace(),
+        pageCapture:
+            features.pageCapture !== false ? pageCapture : buildNoopNamespace(),
+        platformKeys,
+        power,
+        printerProvider,
+        printing,
+        printingMetrics,
+        readingList,
+        search: features.search !== false ? search : buildNoopNamespace(),
+        serial,
+        sessions: features.sessions !== false ? sessions : buildNoopNamespace(),
+        socket,
+        systemLog,
+        tabCapture,
+        tabGroups:
+            features.tabGroups !== false ? tabGroups : buildNoopNamespace(),
+        topSites,
+        tts: features.tts !== false ? tts : buildNoopNamespace(),
+        ttsEngine,
+        userScripts:
+            features.userScripts !== false ? userScripts : buildNoopNamespace(),
+        vpnProvider,
+        wallpaper,
+        webAuthenticationProxy,
 
+        cast: undefined,
         app: {
             getDetails: () => null,
             getIsInstalled: () => false,
@@ -164,30 +289,35 @@ declare const __CIVIL_SHIM_OPTIONS__: ShimOptions;
         },
 
         identity: {
-            getAuthToken: (
-                _details: unknown,
-                cb?: (token?: string) => void,
-            ) => {
+            getAuthToken: (_d: unknown, cb?: (t?: string) => void) => {
                 if (cb) cb(undefined);
                 return Promise.resolve(undefined as string | undefined);
             },
-            removeCachedAuthToken: (_details: unknown, cb?: () => void) => {
+            removeCachedAuthToken: (_d: unknown, cb?: () => void) => {
                 if (cb) cb();
                 return Promise.resolve();
             },
             getRedirectURL: (path?: string) =>
                 `https://${extId}.chromiumapp.org/${path ?? ""}`,
-            launchWebAuthFlow: (
-                _details: unknown,
-                cb?: (responseUrl?: string) => void,
-            ) => {
+            getProfileUserInfo: (_d: unknown, cb?: (i: unknown) => void) => {
+                if (cb) cb({ email: "", id: "" });
+                return Promise.resolve({ email: "", id: "" });
+            },
+            launchWebAuthFlow: (_d: unknown, cb?: (url?: string) => void) => {
                 if (cb) cb(undefined);
                 return Promise.resolve(undefined as string | undefined);
+            },
+            clearAllCachedAuthTokens: (cb?: () => void) => {
+                if (cb) cb();
+                return Promise.resolve();
             },
             onSignInChanged: {
                 addListener() {},
                 removeListener() {},
                 hasListener() {
+                    return false;
+                },
+                hasListeners() {
                     return false;
                 },
             },
@@ -197,8 +327,8 @@ declare const __CIVIL_SHIM_OPTIONS__: ShimOptions;
             cpu: {
                 getInfo: (cb?: (info: unknown) => void) => {
                     const info = {
-                        numOfProcessors: 4,
-                        archName: "x86-64",
+                        numOfProcessors: navigator.hardwareConcurrency ?? 4,
+                        archName: bib.platformInfo.arch ?? "x86-64",
                         modelName: "Civil Shim CPU",
                         features: [],
                         processors: [],
@@ -208,36 +338,57 @@ declare const __CIVIL_SHIM_OPTIONS__: ShimOptions;
                 },
             },
             memory: {
-                getInfo: (
-                    cb?: (info: {
-                        capacity: number;
-                        availableCapacity: number;
-                        physicalMemory?: number;
-                    }) => void,
-                ) => {
+                getInfo: (cb?: (info: unknown) => void) => {
                     const info = {
                         capacity: 8 * 1024 * 1024 * 1024,
                         availableCapacity: 4 * 1024 * 1024 * 1024,
+                        physicalMemory: 8 * 1024 * 1024 * 1024,
                     };
                     if (cb) cb(info);
                     return Promise.resolve(info);
                 },
             },
             storage: {
-                getInfo: (cb?: (info: unknown[]) => void) => {
+                getInfo: (cb?: (i: unknown[]) => void) => {
                     if (cb) cb([]);
                     return Promise.resolve([]);
                 },
             },
             display: {
-                getInfo: (cb?: (info: unknown[]) => void) => {
+                getInfo: (cb?: (i: unknown[]) => void) => {
+                    if (cb) cb([]);
+                    return Promise.resolve([]);
+                },
+                onDisplayChanged: {
+                    addListener() {},
+                    removeListener() {},
+                    hasListener() {
+                        return false;
+                    },
+                    hasListeners() {
+                        return false;
+                    },
+                },
+            },
+            network: {
+                getNetworkInterfaces: (cb?: (i: unknown[]) => void) => {
                     if (cb) cb([]);
                     return Promise.resolve([]);
                 },
             },
+            powerSource: {
+                onPowerChanged: {
+                    addListener() {},
+                    removeListener() {},
+                    hasListener() {
+                        return false;
+                    },
+                    hasListeners() {
+                        return false;
+                    },
+                },
+            },
         },
-
-        cast: undefined,
     };
 
     const w = window as unknown as Record<string, unknown>;
@@ -247,18 +398,74 @@ declare const __CIVIL_SHIM_OPTIONS__: ShimOptions;
     storage.onChanged.addListener(() => {
         try {
             window.parent?.postMessage(
-                { type: "civil-ext-storage", data: storage._local._snapshot() },
+                {
+                    type: bib.storagePostMessageType,
+                    data: storage._local._snapshot(),
+                },
                 "*",
             );
         } catch {}
     });
 
     window.addEventListener("message", (e: MessageEvent) => {
-        if (e.data?.type === "civil-ext-storage-sync") {
-            storage._local._seed(e.data.data as Record<string, unknown>);
-            storage._session._seed(
-                (e.data.session as Record<string, unknown>) ?? {},
-            );
+        if (!e.data) return;
+        if (e.data.type === bib.storageSyncMessageType) {
+            const d = e.data as {
+                type: string;
+                data?: Record<string, unknown>;
+                session?: Record<string, unknown>;
+            };
+            if (d.data) storage._local._seed(d.data);
+            if (d.session) storage._session._seed(d.session);
         }
     });
 })();
+
+function buildNoopNamespace(): Record<string, unknown> {
+    return {};
+}
+
+function buildDNRStub() {
+    const noop2 = (_a?: unknown, _b?: unknown, cb?: () => void) => {
+        if (cb) cb();
+        return Promise.resolve();
+    };
+    return {
+        updateDynamicRules: noop2,
+        getDynamicRules: (_a?: unknown, cb?: (r: unknown[]) => void) => {
+            if (cb) cb([]);
+            return Promise.resolve([]);
+        },
+        updateSessionRules: noop2,
+        getSessionRules: (_a?: unknown, cb?: (r: unknown[]) => void) => {
+            if (cb) cb([]);
+            return Promise.resolve([]);
+        },
+        updateEnabledRulesets: noop2,
+        getEnabledRulesets: (cb?: (r: string[]) => void) => {
+            if (cb) cb([]);
+            return Promise.resolve([]);
+        },
+        getAvailableStaticRuleCount: (cb?: (n: number) => void) => {
+            if (cb) cb(0);
+            return Promise.resolve(0);
+        },
+        isRegexSupported: (
+            _o: unknown,
+            cb?: (r: { isSupported: boolean }) => void,
+        ) => {
+            if (cb) cb({ isSupported: true });
+            return Promise.resolve({ isSupported: true });
+        },
+        onRuleMatchedDebug: {
+            addListener() {},
+            removeListener() {},
+            hasListener() {
+                return false;
+            },
+            hasListeners() {
+                return false;
+            },
+        },
+    };
+}

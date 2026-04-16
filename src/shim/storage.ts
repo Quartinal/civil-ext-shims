@@ -1,6 +1,6 @@
 import type { StorageData } from "../types";
 import { CivilEvent } from "./event";
-import { clone, dual } from "./util";
+import { clone, dual, getBiB, persistenceWrite } from "./util";
 
 type StorageChanges = Record<
     string,
@@ -10,7 +10,6 @@ type StorageArea = "local" | "sync" | "session" | "managed";
 
 class StorageNamespace {
     private _data: StorageData;
-
     private readonly _globalOnChanged: CivilEvent<
         (changes: StorageChanges, areaName: StorageArea) => void
     >;
@@ -60,7 +59,7 @@ class StorageNamespace {
                 changes[k] = { oldValue, newValue: clone(newVal) };
             }
             this._globalOnChanged.dispatch(changes, this._areaName);
-            this._persistLocal();
+            this._persist();
             return Promise.resolve();
         }, cb ?? undefined);
     }
@@ -79,7 +78,7 @@ class StorageNamespace {
                 }
             }
             this._globalOnChanged.dispatch(changes, this._areaName);
-            this._persistLocal();
+            this._persist();
             return Promise.resolve();
         }, cb ?? undefined);
     }
@@ -95,7 +94,7 @@ class StorageNamespace {
             }
             this._data = {};
             this._globalOnChanged.dispatch(changes, this._areaName);
-            this._persistLocal();
+            this._persist();
             return Promise.resolve();
         }, cb ?? undefined);
     }
@@ -105,7 +104,6 @@ class StorageNamespace {
         cb?: (bytes: number) => void,
     ): Promise<number> {
         return dual(() => {
-            let bytes = 0;
             const src =
                 keys == null
                     ? this._data
@@ -116,6 +114,7 @@ class StorageNamespace {
                           },
                           {},
                       );
+            let bytes = 0;
             try {
                 bytes = new TextEncoder().encode(JSON.stringify(src)).length;
             } catch {}
@@ -123,20 +122,29 @@ class StorageNamespace {
         }, cb);
     }
 
-    private _persistLocal(): void {
+    private _persist(): void {
         if (this._areaName !== "local") return;
+        const bib = getBiB();
         try {
-            localStorage.setItem(
-                "civil-ext-storage",
-                JSON.stringify(this._data),
-            );
+            const serialised = JSON.stringify(this._data);
+            persistenceWrite(bib.storageKey, serialised);
+            if (
+                bib.storagePersistence === "postMessage" ||
+                bib.storagePersistence !== "none"
+            ) {
+                try {
+                    window.parent?.postMessage(
+                        { type: bib.storagePostMessageType, data: this._data },
+                        "*",
+                    );
+                } catch {}
+            }
         } catch {}
     }
 
     _seed(data: StorageData): void {
         this._data = clone(data);
     }
-
     _snapshot(): StorageData {
         return clone(this._data);
     }
@@ -146,7 +154,6 @@ export function buildStorageAPI(initialData: StorageData) {
     const onChanged = new CivilEvent<
         (changes: StorageChanges, areaName: StorageArea) => void
     >();
-
     const local = new StorageNamespace(initialData, "local", onChanged);
     const sync = new StorageNamespace(initialData, "sync", onChanged);
     const session = new StorageNamespace({}, "session", onChanged);

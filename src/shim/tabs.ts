@@ -1,56 +1,43 @@
-import type { TabInfo } from "../types";
 import { CivilEvent } from "./event";
-import { dual, resolved } from "./util";
+import { dispatchBrowserEvent, dual, getBiB, resolved } from "./util";
 
-function _toChromTab(t: TabInfo): chrome.tabs.Tab {
-    return {
-        id: parseInt(t.id, 16) || 0,
-        index: t.index,
-        windowId: t.windowId,
-        highlighted: t.highlighted,
-        active: t.active,
-        pinned: t.pinned,
-        audible: t.audible ?? false,
-        discarded: t.discarded,
-        autoDiscardable: t.autoDiscardable,
-        mutedInfo: t.mutedInfo ?? { muted: false },
-        url: t.url,
-        pendingUrl: t.pendingUrl,
-        title: t.title,
-        favIconUrl: t.favIconUrl,
-        status: t.status ?? "complete",
-        incognito: t.incognito,
-        width: t.width,
-        height: t.height,
-        sessionId: t.sessionId,
-        groupId: t.groupId ?? -1,
-        openerTabId: t.openerTabId
-            ? parseInt(t.openerTabId, 16) || undefined
-            : undefined,
-        selected: t.active,
-    } as chrome.tabs.Tab;
-}
+type TabChangeInfo = chrome.tabs.OnActiveChangedInfo;
+type TabActiveInfo = chrome.tabs.OnActivatedInfo;
+type TabMoveInfo = chrome.tabs.OnMovedInfo;
+type TabHighlightInfo = chrome.tabs.OnHighlightedInfo;
+type TabDetachInfo = chrome.tabs.OnDetachedInfo;
+type TabAttachInfo = chrome.tabs.OnAttachedInfo;
+type TabRemoveInfo = chrome.tabs.OnRemovedInfo;
+type ZoomChangeInfo = chrome.tabs.OnZoomChangeInfo;
+type ZoomSettings = chrome.tabs.ZoomSettings;
+type HighlightInfo = chrome.tabs.HighlightInfo;
 
 function makeSelfTab(): chrome.tabs.Tab {
+    const bib = getBiB();
+    const syn = bib.currentTab;
     return {
-        id: -1,
-        index: 0,
-        windowId: 1,
+        id: syn.id ?? -1,
+        index: syn.index ?? 0,
+        windowId: syn.windowId ?? 1,
         highlighted: true,
-        active: true,
-        pinned: false,
+        active: syn.active ?? true,
+        pinned: syn.pinned ?? false,
         audible: false,
         discarded: false,
         autoDiscardable: true,
         mutedInfo: { muted: false },
-        url: typeof window !== "undefined" ? window.location.href : "",
-        title: typeof document !== "undefined" ? document.title : "",
-        favIconUrl: undefined,
-        status: "complete",
-        incognito: false,
+        url:
+            syn.url ??
+            (typeof window !== "undefined" ? window.location.href : ""),
+        title:
+            syn.title ??
+            (typeof document !== "undefined" ? document.title : ""),
+        favIconUrl: syn.favIconUrl,
+        status: syn.status ?? "complete",
+        incognito: syn.incognito ?? bib.incognito,
         width: typeof window !== "undefined" ? window.innerWidth : 1280,
         height: typeof window !== "undefined" ? window.innerHeight : 800,
-        groupId: -1,
+        groupId: syn.groupId ?? -1,
         selected: true,
     } as chrome.tabs.Tab;
 }
@@ -58,35 +45,29 @@ function makeSelfTab(): chrome.tabs.Tab {
 export function buildTabsAPI(extId: string) {
     const onCreated = new CivilEvent<(tab: chrome.tabs.Tab) => void>();
     const onRemoved = new CivilEvent<
-        (tabId: number, removeInfo: chrome.tabs.OnRemovedInfo) => void
+        (tabId: number, removeInfo: TabRemoveInfo) => void
     >();
     const onUpdated = new CivilEvent<
-        (
-            tabId: number,
-            changeInfo: chrome.tabs.OnUpdatedInfo,
-            tab: chrome.tabs.Tab,
-        ) => void
+        (tabId: number, changeInfo: TabChangeInfo, tab: chrome.tabs.Tab) => void
     >();
-    const onActivated = new CivilEvent<
-        (activeInfo: chrome.tabs.OnActivatedInfo) => void
-    >();
+    const onActivated = new CivilEvent<(activeInfo: TabActiveInfo) => void>();
     const onMoved = new CivilEvent<
-        (tabId: number, moveInfo: chrome.tabs.OnMovedInfo) => void
+        (tabId: number, moveInfo: TabMoveInfo) => void
     >();
     const onHighlighted = new CivilEvent<
-        (highlightInfo: chrome.tabs.OnHighlightedInfo) => void
+        (highlightInfo: TabHighlightInfo) => void
     >();
     const onDetached = new CivilEvent<
-        (tabId: number, detachInfo: chrome.tabs.OnDetachedInfo) => void
+        (tabId: number, detachInfo: TabDetachInfo) => void
     >();
     const onAttached = new CivilEvent<
-        (tabId: number, attachInfo: chrome.tabs.OnAttachedInfo) => void
+        (tabId: number, attachInfo: TabAttachInfo) => void
     >();
     const onReplaced = new CivilEvent<
         (addedTabId: number, removedTabId: number) => void
     >();
     const onZoomChange = new CivilEvent<
-        (zoomChangeInfo: chrome.tabs.OnZoomChangeInfo) => void
+        (zoomChangeInfo: ZoomChangeInfo) => void
     >();
 
     function query(
@@ -120,17 +101,13 @@ export function buildTabsAPI(extId: string) {
     }
 
     function create(
-        createProperties: chrome.tabs.CreateProperties,
+        props: chrome.tabs.CreateProperties,
         cb?: (tab: chrome.tabs.Tab) => void,
     ): Promise<chrome.tabs.Tab> {
         return dual(() => {
-            if (createProperties.url && typeof document !== "undefined") {
-                document.dispatchEvent(
-                    new CustomEvent("browser:newtab", {
-                        detail: { url: createProperties.url },
-                    }),
-                );
-            }
+            const bib = getBiB();
+            if (props.url)
+                dispatchBrowserEvent(bib.newTabEvent, { url: props.url });
             return Promise.resolve(makeSelfTab());
         }, cb);
     }
@@ -148,17 +125,12 @@ export function buildTabsAPI(extId: string) {
                 : tabIdOrProps;
         const cb =
             typeof tabIdOrProps === "number"
-                ? (maybeCb as ((tab?: chrome.tabs.Tab) => void) | undefined)
+                ? maybeCb
                 : (propsOrCb as ((tab?: chrome.tabs.Tab) => void) | undefined);
-
         return dual(() => {
-            if (props.url && typeof document !== "undefined") {
-                document.dispatchEvent(
-                    new CustomEvent("browser:navigate", {
-                        detail: { url: props.url },
-                    }),
-                );
-            }
+            const bib = getBiB();
+            if (props?.url)
+                dispatchBrowserEvent(bib.navigateEvent, { url: props.url });
             return Promise.resolve(makeSelfTab());
         }, cb);
     }
@@ -179,48 +151,48 @@ export function buildTabsAPI(extId: string) {
         maybeCb?: (response: unknown) => void,
     ): Promise<unknown> {
         const cb = typeof optionsOrCb === "function" ? optionsOrCb : maybeCb;
-        if (typeof document !== "undefined") {
+        try {
             document.dispatchEvent(
                 new CustomEvent("civil-ext-tab-message", {
                     detail: { extId, message },
                 }),
             );
-        }
+        } catch {}
         return dual(() => Promise.resolve(undefined), cb);
     }
 
     function executeScript(
-        _tabIdOrDetails: number | Record<string, unknown>,
-        _detailsOrCb?: Record<string, unknown> | ((results: unknown[]) => void),
-        maybeCb?: (results: unknown[]) => void,
+        _a: unknown,
+        _b?: unknown,
+        cb?: (r: unknown[]) => void,
     ): Promise<unknown[]> {
-        const cb = typeof _detailsOrCb === "function" ? _detailsOrCb : maybeCb;
         return resolved([], cb);
     }
-
     function insertCSS(
-        _tabIdOrDetails: number | Record<string, unknown>,
-        _detailsOrCb?: Record<string, unknown> | (() => void),
-        maybeCb?: () => void,
+        _a: unknown,
+        _b?: unknown,
+        cb?: () => void,
     ): Promise<void> {
-        return resolved(undefined, maybeCb);
+        return resolved(undefined, cb);
     }
 
     function captureVisibleTab(
-        _windowIdOrOptions?: number | chrome.extensionTypes.ImageDetails,
-        _optionsOrCb?:
-            | chrome.extensionTypes.ImageDetails
-            | ((dataUrl: string) => void),
-        maybeCb?: (dataUrl: string) => void,
+        _a?: unknown,
+        _b?: unknown,
+        cb?: (url: string) => void,
     ): Promise<string> {
-        return resolved("", maybeCb);
+        return resolved("", cb);
     }
-
     function detectLanguage(
         _tabId: number,
-        cb?: (language: string) => void,
+        cb?: (lang: string) => void,
     ): Promise<string> {
-        return resolved(navigator.language || "en", cb);
+        return resolved(
+            typeof navigator !== "undefined"
+                ? navigator.language || "en"
+                : "en",
+            cb,
+        );
     }
 
     function discard(
@@ -229,7 +201,6 @@ export function buildTabsAPI(extId: string) {
     ): Promise<chrome.tabs.Tab | undefined> {
         return resolved(undefined, cb);
     }
-
     function duplicate(
         _tabId: number,
         cb?: (tab?: chrome.tabs.Tab) => void,
@@ -238,8 +209,8 @@ export function buildTabsAPI(extId: string) {
     }
 
     function highlight(
-        _highlightInfo: chrome.tabs.HighlightInfo,
-        cb?: (window: chrome.windows.Window) => void,
+        _info: HighlightInfo,
+        cb?: (w: chrome.windows.Window) => void,
     ): Promise<chrome.windows.Window> {
         return resolved(
             {
@@ -257,56 +228,55 @@ export function buildTabsAPI(extId: string) {
     function move(
         _tabIds: number | number[],
         _moveProperties: chrome.tabs.MoveProperties,
-        cb?: (tabs: chrome.tabs.Tab | chrome.tabs.Tab[]) => void,
+        cb?: (t: chrome.tabs.Tab | chrome.tabs.Tab[]) => void,
     ): Promise<chrome.tabs.Tab | chrome.tabs.Tab[]> {
         return resolved(makeSelfTab(), cb);
     }
 
     function reload(
-        _tabIdOrReloadProperties?: number | chrome.tabs.ReloadProperties,
-        _reloadPropertiesOrCb?: chrome.tabs.ReloadProperties | (() => void),
-        maybeCb?: () => void,
+        _a?: unknown,
+        _b?: unknown,
+        cb?: () => void,
     ): Promise<void> {
-        return resolved(undefined, maybeCb);
+        return resolved(undefined, cb);
     }
-
     function goBack(_tabId?: number, cb?: () => void): Promise<void> {
         return resolved(undefined, cb);
     }
-
     function goForward(_tabId?: number, cb?: () => void): Promise<void> {
         return resolved(undefined, cb);
     }
 
     function setZoom(
-        _tabIdOrZoomFactor: number,
-        _zoomFactorOrCb?: number | (() => void),
-        maybeCb?: () => void,
-    ): Promise<void> {
-        return resolved(undefined, maybeCb);
-    }
-
-    function getZoom(
-        _tabId?: number,
-        cb?: (zoomFactor: number) => void,
-    ): Promise<number> {
-        return resolved(1, cb);
-    }
-
-    function setZoomSettings(
-        _tabId: number,
-        _zoomSettings: chrome.tabs.ZoomSettings,
+        _a: number,
+        _b?: number | (() => void),
         cb?: () => void,
     ): Promise<void> {
         return resolved(undefined, cb);
     }
-
+    function getZoom(
+        _tabId?: number,
+        cb?: (z: number) => void,
+    ): Promise<number> {
+        return resolved(1, cb);
+    }
+    function setZoomSettings(
+        _tabId: number,
+        _z: ZoomSettings,
+        cb?: () => void,
+    ): Promise<void> {
+        return resolved(undefined, cb);
+    }
     function getZoomSettings(
         _tabId?: number,
-        cb?: (zoomSettings: chrome.tabs.ZoomSettings) => void,
-    ): Promise<chrome.tabs.ZoomSettings> {
+        cb?: (z: ZoomSettings) => void,
+    ): Promise<ZoomSettings> {
         return resolved(
-            { mode: "automatic", scope: "per-origin", defaultZoomFactor: 1 },
+            {
+                mode: "automatic",
+                scope: "per-origin",
+                defaultZoomFactor: 1,
+            } as ZoomSettings,
             cb,
         );
     }
@@ -317,12 +287,25 @@ export function buildTabsAPI(extId: string) {
     ): Promise<chrome.tabs.Tab[]> {
         return resolved([makeSelfTab()], cb);
     }
-
     function getSelected(
         _windowId?: number,
         cb?: (tab: chrome.tabs.Tab) => void,
     ): Promise<chrome.tabs.Tab> {
         return resolved(makeSelfTab(), cb);
+    }
+
+    // chrome.tabs.group / ungroup (MV3 tab groups)
+    function group(
+        _options: { tabIds: number | number[]; groupId?: number },
+        cb?: (groupId: number) => void,
+    ): Promise<number> {
+        return resolved(-1, cb);
+    }
+    function ungroup(
+        _tabIds: number | number[],
+        cb?: () => void,
+    ): Promise<void> {
+        return resolved(undefined, cb);
     }
 
     return {
@@ -350,6 +333,8 @@ export function buildTabsAPI(extId: string) {
         getZoomSettings,
         getAllInWindow,
         getSelected,
+        group,
+        ungroup,
         onCreated,
         onRemoved,
         onUpdated,
